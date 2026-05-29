@@ -12,6 +12,7 @@ from api import create_api
 from config_store import ConfigStore
 from database import ensure_sqlite_directory, resolve_db_path
 from schedule.repository import count_courses, init_db, insert_sample_data
+from database import init_google_tokens_db
 from slack.commands import register_commands
 from scheduler import create_scheduler
 
@@ -62,6 +63,7 @@ def main() -> None:
     app_token = os.getenv("SLACK_APP_TOKEN", "")
 
     init_db(db_path)
+    init_google_tokens_db(db_path)
 
     if count_courses(db_path) == 0:
         insert_sample_data(db_path)
