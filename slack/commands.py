@@ -191,7 +191,7 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
                 text=(
                     ":gear: 현재 설정\n"
                     f"• 도시: *{config['city']}*\n"
-                    f"• 알림 시각: *{config['notify_time']}*\n"
+                    f"• 알림 시각: *{str(config['notify_time'])[:5]}*\n"
                     f"• 타임존: *{config['timezone']}*\n\n"
                     "변경하려면 `/config Seoul 07:00 Asia/Seoul` 또는 `/설정 Seoul 07:00 Asia/Seoul` 형식으로 입력하세요."
                 ),
@@ -200,7 +200,7 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
             return
 
         city = parts[0] if len(parts) >= 1 else config["city"]
-        notify_time = parts[1] if len(parts) >= 2 else config["notify_time"]
+        notify_time = parts[1] if len(parts) >= 2 else str(config["notify_time"])[:5]
         timezone = parts[2] if len(parts) >= 3 else config["timezone"]
 
         if not _is_valid_time(notify_time):
