@@ -121,7 +121,7 @@ def _is_user_brief_due(config: dict) -> bool:
 def _user_brief_key(config: dict) -> tuple[str, str, str]:
     timezone = _valid_timezone(config.get("timezone"))
     now = datetime.now(ZoneInfo(timezone))
-    return (config["slack_user_id"], now.strftime("%Y-%m-%d"), config.get("notify_time", ""))
+    return (config["slack_user_id"], now.strftime("%Y-%m-%d"), str(config.get("notify_time", ""))[:5])
 
 
 def _valid_timezone(timezone: str | None) -> str:

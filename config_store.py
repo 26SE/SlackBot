@@ -89,7 +89,7 @@ class ConfigStore:
         current = self.get(slack_user_id)
         new_region = region or city or current["region"]
         new_city = city or region or current["city"]
-        new_time = notify_time or current["notify_time"]
+        new_time = notify_time or str(current["notify_time"])[:5]
         new_tz = timezone or current["timezone"]
         new_settings = current["settings"].copy()
         if settings is not None:
