@@ -210,7 +210,12 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
             respond(text=":warning: 타임존 형식이 올바르지 않습니다 (예: Asia/Seoul)", response_type="ephemeral")
             return
 
-        config_store.set(user_id, city=city, notify_time=notify_time, timezone=timezone)
+        try:
+            config_store.set(user_id, city=city, notify_time=notify_time, timezone=timezone)
+        except Exception as e:
+            logger.error("/설정 저장 실패: %s", e)
+            respond(text=f":rotating_light: 설정 저장 실패: {e}", response_type="ephemeral")
+            return
         respond(
             text=(
                 ":white_check_mark: 설정이 저장되었습니다.\n"
