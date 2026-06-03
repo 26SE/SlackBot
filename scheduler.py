@@ -80,14 +80,23 @@ def _run_user_daily_brief(app, user_config: dict, api_key: str, db_path: str | N
 
 def _run_due_user_briefs(app, config_store: ConfigStore, api_key: str, db_path: str | None) -> None:
     _cleanup_sent_user_briefs()
-    for config in config_store.list_all():
+    try:
+        configs = config_store.list_all()
+    except Exception as e:
+        logger.error("유저 설정 목록 조회 실패: %s", e)
+        return
+    for config in configs:
         if not _is_user_brief_due(config):
             continue
         key = _user_brief_key(config)
         if key in _sent_user_briefs:
             continue
-        if _run_user_daily_brief(app, config, api_key, db_path):
-            _sent_user_briefs.add(key)
+        logger.info("유저 브리프 발송 시도: %s notify_time=%s", config.get("slack_user_id"), config.get("notify_time"))
+        try:
+            if _run_user_daily_brief(app, config, api_key, db_path):
+                _sent_user_briefs.add(key)
+        except Exception as e:
+            logger.error("유저 브리프 발송 실패: %s user=%s", e, config.get("slack_user_id"))
 
 
 def _cleanup_sent_user_briefs() -> None:
