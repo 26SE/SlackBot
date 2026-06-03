@@ -80,14 +80,26 @@ def _run_user_daily_brief(app, user_config: dict, api_key: str, db_path: str | N
 
 def _run_due_user_briefs(app, config_store: ConfigStore, api_key: str, db_path: str | None) -> None:
     _cleanup_sent_user_briefs()
-    for config in config_store.list_all():
-        if not _is_user_brief_due(config):
+    try:
+        configs = config_store.list_all()
+        logger.info("유저 설정 목록 조회: %d건", len(configs))
+    except Exception as e:
+        logger.error("유저 설정 목록 조회 실패: %s", e)
+        return
+    for config in configs:
+        due = _is_user_brief_due(config)
+        logger.info("유저 설정 체크: user=%s notify_time=%s due=%s", config.get("slack_user_id"), config.get("notify_time"), due)
+        if not due:
             continue
         key = _user_brief_key(config)
         if key in _sent_user_briefs:
             continue
-        if _run_user_daily_brief(app, config, api_key, db_path):
-            _sent_user_briefs.add(key)
+        logger.info("유저 브리프 발송 시도: %s notify_time=%s", config.get("slack_user_id"), config.get("notify_time"))
+        try:
+            if _run_user_daily_brief(app, config, api_key, db_path):
+                _sent_user_briefs.add(key)
+        except Exception as e:
+            logger.error("유저 브리프 발송 실패: %s user=%s", e, config.get("slack_user_id"))
 
 
 def _cleanup_sent_user_briefs() -> None:
@@ -100,7 +112,7 @@ def _cleanup_sent_user_briefs() -> None:
 
 
 def _is_user_brief_due(config: dict) -> bool:
-    notify_time = config.get("notify_time", "")
+    notify_time = str(config.get("notify_time", ""))[:5]
     timezone = _valid_timezone(config.get("timezone"))
     now = datetime.now(ZoneInfo(timezone))
     return notify_time == now.strftime("%H:%M")
@@ -109,7 +121,7 @@ def _is_user_brief_due(config: dict) -> bool:
 def _user_brief_key(config: dict) -> tuple[str, str, str]:
     timezone = _valid_timezone(config.get("timezone"))
     now = datetime.now(ZoneInfo(timezone))
-    return (config["slack_user_id"], now.strftime("%Y-%m-%d"), config.get("notify_time", ""))
+    return (config["slack_user_id"], now.strftime("%Y-%m-%d"), str(config.get("notify_time", ""))[:5])
 
 
 def _valid_timezone(timezone: str | None) -> str:

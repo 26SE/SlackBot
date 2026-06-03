@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 WEATHER_COMMANDS = ("/날씨", "/날씨1", "/weather")
 SCHEDULE_COMMANDS = ("/시간표", "/시간표1", "/schedule")
-CONFIG_COMMANDS = ("/설정", "/config")
+CONFIG_COMMANDS = ("/설정", "/설정1", "/config")
 HELP_COMMANDS = ("/도움말", "/bot-help")
 BRIEF_COMMANDS = ("/브리핑", "/브리핑1", "/brief")
 
@@ -181,8 +181,9 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
     def cmd_config(ack, respond, say, command):
         ack()
         user_id = command["user_id"]
-        parts = command.get("text", "").strip().split()
-        logger.info("슬래시 커맨드 수신: %s user=%s", command.get("command"), user_id)
+        raw_text = command.get("text", "")
+        parts = raw_text.strip().split()
+        logger.info("슬래시 커맨드 수신: %s user=%s text=%r parts=%s", command.get("command"), user_id, raw_text, parts)
 
         config = config_store.get(user_id)
         if len(parts) < 1:
@@ -190,7 +191,7 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
                 text=(
                     ":gear: 현재 설정\n"
                     f"• 도시: *{config['city']}*\n"
-                    f"• 알림 시각: *{config['notify_time']}*\n"
+                    f"• 알림 시각: *{str(config['notify_time'])[:5]}*\n"
                     f"• 타임존: *{config['timezone']}*\n\n"
                     "변경하려면 `/config Seoul 07:00 Asia/Seoul` 또는 `/설정 Seoul 07:00 Asia/Seoul` 형식으로 입력하세요."
                 ),
@@ -199,7 +200,7 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
             return
 
         city = parts[0] if len(parts) >= 1 else config["city"]
-        notify_time = parts[1] if len(parts) >= 2 else config["notify_time"]
+        notify_time = parts[1] if len(parts) >= 2 else str(config["notify_time"])[:5]
         timezone = parts[2] if len(parts) >= 3 else config["timezone"]
 
         if not _is_valid_time(notify_time):
@@ -209,7 +210,12 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
             respond(text=":warning: 타임존 형식이 올바르지 않습니다 (예: Asia/Seoul)", response_type="ephemeral")
             return
 
-        config_store.set(user_id, city=city, notify_time=notify_time, timezone=timezone)
+        try:
+            config_store.set(user_id, city=city, notify_time=notify_time, timezone=timezone)
+        except Exception as e:
+            logger.error("/설정 저장 실패: %s", e)
+            respond(text=f":rotating_light: 설정 저장 실패: {e}", response_type="ephemeral")
+            return
         respond(
             text=(
                 ":white_check_mark: 설정이 저장되었습니다.\n"
