@@ -82,11 +82,14 @@ def _run_due_user_briefs(app, config_store: ConfigStore, api_key: str, db_path: 
     _cleanup_sent_user_briefs()
     try:
         configs = config_store.list_all()
+        logger.info("유저 설정 목록 조회: %d건", len(configs))
     except Exception as e:
         logger.error("유저 설정 목록 조회 실패: %s", e)
         return
     for config in configs:
-        if not _is_user_brief_due(config):
+        due = _is_user_brief_due(config)
+        logger.info("유저 설정 체크: user=%s notify_time=%s due=%s", config.get("slack_user_id"), config.get("notify_time"), due)
+        if not due:
             continue
         key = _user_brief_key(config)
         if key in _sent_user_briefs:
