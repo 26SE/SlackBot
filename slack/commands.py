@@ -181,8 +181,9 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
     def cmd_config(ack, respond, say, command):
         ack()
         user_id = command["user_id"]
-        parts = command.get("text", "").strip().split()
-        logger.info("슬래시 커맨드 수신: %s user=%s", command.get("command"), user_id)
+        raw_text = command.get("text", "")
+        parts = raw_text.strip().split()
+        logger.info("슬래시 커맨드 수신: %s user=%s text=%r parts=%s", command.get("command"), user_id, raw_text, parts)
 
         config = config_store.get(user_id)
         if len(parts) < 1:
