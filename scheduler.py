@@ -112,7 +112,7 @@ def _cleanup_sent_user_briefs() -> None:
 
 
 def _is_user_brief_due(config: dict) -> bool:
-    notify_time = config.get("notify_time", "")
+    notify_time = config.get("notify_time", "")[:5]
     timezone = _valid_timezone(config.get("timezone"))
     now = datetime.now(ZoneInfo(timezone))
     return notify_time == now.strftime("%H:%M")
