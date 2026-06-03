@@ -110,8 +110,7 @@ class ConfigStore:
                                 region        = EXCLUDED.region,
                                 notify_time   = EXCLUDED.notify_time,
                                 timezone      = EXCLUDED.timezone,
-                                settings_json = EXCLUDED.settings_json,
-                                updated_at    = {now_sql(self.db_path)}
+                                settings_json = EXCLUDED.settings_json
                             """,
                             (
                                 slack_user_id,
