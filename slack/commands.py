@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 WEATHER_COMMANDS = ("/날씨", "/날씨1", "/weather")
 SCHEDULE_COMMANDS = ("/시간표", "/시간표1", "/schedule")
-CONFIG_COMMANDS = ("/설정", "/config")
+CONFIG_COMMANDS = ("/설정", "/설정1", "/config")
 HELP_COMMANDS = ("/도움말", "/bot-help")
 BRIEF_COMMANDS = ("/브리핑", "/브리핑1", "/brief")
 
