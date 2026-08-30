@@ -15,7 +15,7 @@ from schedule.repository import (
     add_course,
     update_course,
     delete_course,
-    DAY_MAP,
+    DAYS,
 )
 
 
@@ -151,12 +151,6 @@ class TestUserSchedule:
         assert delete_course(db_path, "U_B", course_id) is False
 
 
-class TestDayMap:
+class TestDays:
     def test_요일_매핑_정확성(self):
-        assert DAY_MAP[0] == "Mon"
-        assert DAY_MAP[1] == "Tue"
-        assert DAY_MAP[2] == "Wed"
-        assert DAY_MAP[3] == "Thu"
-        assert DAY_MAP[4] == "Fri"
-        assert DAY_MAP[5] == "Sat"
-        assert DAY_MAP[6] == "Sun"
+        assert DAYS == ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")

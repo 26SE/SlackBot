@@ -1,7 +1,8 @@
 import logging
 import shlex
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from slack_bolt import App
 
@@ -11,10 +12,9 @@ from slack.message_builder import (
     build_weather_message,
     build_schedule_message,
     build_help_message,
-    build_daily_message,
 )
 from config_store import ConfigStore
-from google_calendar import fetch_today_events
+from scheduler import build_brief, is_valid_timezone, valid_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -24,59 +24,47 @@ CONFIG_COMMANDS = ("/설정", "/설정1", "/config")
 HELP_COMMANDS = ("/도움말", "/bot-help")
 BRIEF_COMMANDS = ("/브리핑", "/브리핑1", "/brief")
 
+SCHEDULE_ACTIONS = ("추가", "수정", "삭제")
+
 UPDATE_FIELD_ALIASES = {
-    "name": "course_name",
-    "course": "course_name",
-    "course_name": "course_name",
-    "과목": "course_name",
-    "과목명": "course_name",
-    "day": "day_of_week",
-    "day_of_week": "day_of_week",
-    "요일": "day_of_week",
-    "start": "start_time",
-    "start_time": "start_time",
-    "시작": "start_time",
-    "end": "end_time",
-    "end_time": "end_time",
-    "종료": "end_time",
-    "room": "room",
-    "장소": "room",
-    "professor": "professor",
-    "교수": "professor",
-    "memo": "memo",
-    "메모": "memo",
+    alias: field
+    for field, aliases in {
+        "course_name": ("name", "course", "과목", "과목명"),
+        "day_of_week": ("day", "요일"),
+        "start_time": ("start", "시작"),
+        "end_time": ("end", "종료"),
+        "room": ("장소",),
+        "professor": ("교수",),
+        "memo": ("메모",),
+    }.items()
+    for alias in (field, *aliases)
 }
 
 DAY_ALIASES = {
-    "mon": "Mon",
-    "monday": "Mon",
-    "월": "Mon",
-    "월요일": "Mon",
-    "tue": "Tue",
-    "tuesday": "Tue",
-    "화": "Tue",
-    "화요일": "Tue",
-    "wed": "Wed",
-    "wednesday": "Wed",
-    "수": "Wed",
-    "수요일": "Wed",
-    "thu": "Thu",
-    "thursday": "Thu",
-    "목": "Thu",
-    "목요일": "Thu",
-    "fri": "Fri",
-    "friday": "Fri",
-    "금": "Fri",
-    "금요일": "Fri",
-    "sat": "Sat",
-    "saturday": "Sat",
-    "토": "Sat",
-    "토요일": "Sat",
-    "sun": "Sun",
-    "sunday": "Sun",
-    "일": "Sun",
-    "일요일": "Sun",
+    alias: name[:3]
+    for name, korean in zip(
+        ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
+        "월화수목금토일",
+    )
+    for alias in (name[:3].lower(), name.lower(), korean, f"{korean}요일")
 }
+
+
+def _reply(respond, **kwargs) -> None:
+    """슬래시 커맨드 응답은 항상 본인에게만 보인다."""
+    respond(response_type="ephemeral", **kwargs)
+
+
+@contextmanager
+def _warn_on_error(respond, message: str):
+    """실패하면 경고로 응답한다. 입력 오류(ValueError)는 그 메시지를 그대로 보여준다."""
+    try:
+        yield
+    except ValueError as e:
+        _reply(respond, text=f":warning: {e}")
+    except Exception as e:
+        logger.error("%s: %s", message, e)
+        _reply(respond, text=f":warning: {message}: {e}")
 
 
 def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path: str | None = None) -> None:
@@ -87,15 +75,9 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
         text = command.get("text", "").strip()
         logger.info("슬래시 커맨드 수신: %s user=%s", command.get("command"), user_id)
 
-        config = config_store.get(user_id)
-        city = text if text else config["city"]
-
-        try:
-            weather = fetch_weather(city, api_key)
-            respond(blocks=build_weather_message(weather), response_type="ephemeral")
-        except Exception as e:
-            logger.error("/날씨 실패: %s", e)
-            respond(text=f":warning: 날씨 정보를 가져올 수 없습니다: {e}", response_type="ephemeral")
+        with _warn_on_error(respond, "날씨 정보를 가져올 수 없습니다"):
+            city = text or config_store.get(user_id)["city"]
+            _reply(respond, blocks=build_weather_message(fetch_weather(city, api_key)))
 
     def cmd_schedule(ack, respond, command):
         ack()
@@ -103,140 +85,64 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
         text = command.get("text", "").strip()
         logger.info("슬래시 커맨드 수신: %s user=%s text=%s", command.get("command"), user_id, text)
 
-        if text.startswith("추가"):
-            try:
-                course = _parse_add_course_arg(text)
-                course_id = add_course(db_path, user_id, **course)
-                respond(
-                    text=(
-                        ":white_check_mark: 시간표에 추가했습니다.\n"
-                        f"• ID: *{course_id}*\n"
-                        f"• 과목: *{course['course_name']}*\n"
-                        f"• 시간: *{course['day_of_week']} {course['start_time']}~{course['end_time']}*"
-                    ),
-                    response_type="ephemeral",
-                )
-            except ValueError as e:
-                respond(text=f":warning: {e}", response_type="ephemeral")
-            except Exception as e:
-                logger.error("/시간표 추가 실패: %s", e)
-                respond(text=f":warning: 시간표를 추가할 수 없습니다: {e}", response_type="ephemeral")
-            return
-        if text.startswith("수정"):
-            try:
-                course_id, fields = _parse_update_course_arg(text)
-                updated = update_course(db_path, user_id, course_id, **fields)
-                if not updated:
-                    respond(
-                        text=f":warning: 수정할 수 있는 개인 일정 ID `{course_id}`를 찾지 못했습니다.",
-                        response_type="ephemeral",
-                    )
-                    return
-                respond(
-                    text=(
-                        ":white_check_mark: 시간표를 수정했습니다.\n"
-                        f"• ID: *{course_id}*\n"
-                        f"• 변경: {', '.join(f'*{key}*' for key in fields)}"
-                    ),
-                    response_type="ephemeral",
-                )
-            except ValueError as e:
-                respond(text=f":warning: {e}", response_type="ephemeral")
-            except Exception as e:
-                logger.error("/시간표 수정 실패: %s", e)
-                respond(text=f":warning: 시간표를 수정할 수 없습니다: {e}", response_type="ephemeral")
-            return
-        if text.startswith("삭제"):
-            try:
-                course_id = _parse_delete_course_arg(text)
-                deleted = delete_course(db_path, user_id, course_id)
-                if not deleted:
-                    respond(
-                        text=f":warning: 삭제할 수 있는 개인 일정 ID `{course_id}`를 찾지 못했습니다.",
-                        response_type="ephemeral",
-                    )
-                    return
-                respond(
-                    text=f":white_check_mark: 시간표에서 ID *{course_id}* 일정을 삭제했습니다.",
-                    response_type="ephemeral",
-                )
-            except ValueError as e:
-                respond(text=f":warning: {e}", response_type="ephemeral")
-            except Exception as e:
-                logger.error("/시간표 삭제 실패: %s", e)
-                respond(text=f":warning: 시간표를 삭제할 수 없습니다: {e}", response_type="ephemeral")
+        action = next((a for a in SCHEDULE_ACTIONS if text.startswith(a)), None)
+        if action:
+            with _warn_on_error(respond, f"시간표를 {action}할 수 없습니다"):
+                _reply(respond, text=_apply_schedule_action(action, text, db_path, user_id))
             return
 
-        config = config_store.get(user_id)
-        today = _today_for_timezone(config.get("timezone"))
-        target, label = _parse_date_arg(text.lower(), today=today)
-
-        try:
+        with _warn_on_error(respond, "시간표를 불러올 수 없습니다"):
+            today = _today(config_store.get(user_id).get("timezone"))
+            target, label = _parse_date_arg(text.lower(), today)
             courses = get_courses_for_date(db_path, target, user_id)
-            respond(blocks=build_schedule_message(courses, label), response_type="ephemeral")
-        except Exception as e:
-            logger.error("/시간표 실패: %s", e)
-            respond(text=f":warning: 시간표를 불러올 수 없습니다: {e}", response_type="ephemeral")
+            _reply(respond, blocks=build_schedule_message(courses, label))
 
     def cmd_config(ack, respond, say, command):
         ack()
         user_id = command["user_id"]
-        raw_text = command.get("text", "")
-        parts = raw_text.strip().split()
-        logger.info("슬래시 커맨드 수신: %s user=%s text=%r parts=%s", command.get("command"), user_id, raw_text, parts)
+        parts = command.get("text", "").strip().split()
+        logger.info("슬래시 커맨드 수신: %s user=%s parts=%s", command.get("command"), user_id, parts)
 
         config = config_store.get(user_id)
-        if len(parts) < 1:
-            respond(
+        city = parts[0] if parts else config["city"]
+        notify_time = parts[1] if len(parts) >= 2 else str(config["notify_time"])[:5]
+        timezone = parts[2] if len(parts) >= 3 else config["timezone"]
+        summary = f"• 도시: *{city}*\n• 알림 시각: *{notify_time}*\n• 타임존: *{timezone}*"
+
+        if not parts:
+            _reply(
+                respond,
                 text=(
-                    ":gear: 현재 설정\n"
-                    f"• 도시: *{config['city']}*\n"
-                    f"• 알림 시각: *{str(config['notify_time'])[:5]}*\n"
-                    f"• 타임존: *{config['timezone']}*\n\n"
+                    f":gear: 현재 설정\n{summary}\n\n"
                     "변경하려면 `/config Seoul 07:00 Asia/Seoul` 또는 `/설정 Seoul 07:00 Asia/Seoul` 형식으로 입력하세요."
                 ),
-                response_type="ephemeral",
             )
             return
 
-        city = parts[0] if len(parts) >= 1 else config["city"]
-        notify_time = parts[1] if len(parts) >= 2 else str(config["notify_time"])[:5]
-        timezone = parts[2] if len(parts) >= 3 else config["timezone"]
-
         if not _is_valid_time(notify_time):
-            respond(text=":warning: 시각 형식이 올바르지 않습니다 (예: 07:00)", response_type="ephemeral")
+            _reply(respond, text=":warning: 시각 형식이 올바르지 않습니다 (예: 07:00)")
             return
-        if not _is_valid_timezone(timezone):
-            respond(text=":warning: 타임존 형식이 올바르지 않습니다 (예: Asia/Seoul)", response_type="ephemeral")
+        if not is_valid_timezone(timezone):
+            _reply(respond, text=":warning: 타임존 형식이 올바르지 않습니다 (예: Asia/Seoul)")
             return
 
         try:
             config_store.set(user_id, city=city, notify_time=notify_time, timezone=timezone)
         except Exception as e:
-            logger.error("/설정 저장 실패: %s", e)
-            respond(text=f":rotating_light: 설정 저장 실패: {e}", response_type="ephemeral")
+            logger.error("설정 저장 실패: %s", e)
+            _reply(respond, text=f":rotating_light: 설정 저장 실패: {e}")
             return
-        respond(
-            text=(
-                ":white_check_mark: 설정이 저장되었습니다.\n"
-                f"• 도시: *{city}*\n"
-                f"• 알림 시각: *{notify_time}*\n"
-                f"• 타임존: *{timezone}*"
-            ),
-            response_type="ephemeral",
-        )
+
+        _reply(respond, text=f":white_check_mark: 설정이 저장되었습니다.\n{summary}")
         try:
-            say(
-                channel=user_id,
-                text=f":bell: 알림 설정 변경 완료 — {city}, 매일 {notify_time} ({timezone})",
-            )
+            say(channel=user_id, text=f":bell: 알림 설정 변경 완료 — {city}, 매일 {notify_time} ({timezone})")
         except Exception:
             pass
 
     def cmd_help(ack, respond):
         ack()
         logger.info("슬래시 커맨드 수신: 도움말")
-        respond(blocks=build_help_message(), response_type="ephemeral")
+        _reply(respond, blocks=build_help_message())
 
     def cmd_brief(ack, respond, command):
         ack()
@@ -244,45 +150,60 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
         logger.info("슬래시 커맨드 수신: 브리핑 user=%s", user_id)
 
         config = config_store.get(user_id)
-        city = config.get("city") or "Seoul"
-        timezone = config.get("timezone") or "Asia/Seoul"
+        with _warn_on_error(respond, "브리핑을 가져올 수 없습니다"):
+            blocks = build_brief(
+                api_key,
+                db_path,
+                config.get("city") or "Seoul",
+                valid_timezone(config.get("timezone")),
+                user_id,
+            )
+            _reply(respond, blocks=blocks)
 
-        try:
-            today = datetime.now(ZoneInfo(timezone)).date()
-            weather = fetch_weather(city, api_key)
-            courses = get_courses_for_date(db_path, today, user_id)
-            calendar_events = fetch_today_events(timezone=timezone, user_id=user_id)
-            blocks = build_daily_message(weather, courses, timezone=timezone, calendar_events=calendar_events)
-            respond(blocks=blocks, response_type="ephemeral")
-        except Exception as e:
-            logger.error("/브리핑 실패: %s", e)
-            respond(text=f":warning: 브리핑을 가져올 수 없습니다: {e}", response_type="ephemeral")
-
-    _register_aliases(app, WEATHER_COMMANDS, cmd_weather)
-    _register_aliases(app, SCHEDULE_COMMANDS, cmd_schedule)
-    _register_aliases(app, CONFIG_COMMANDS, cmd_config)
-    _register_aliases(app, HELP_COMMANDS, cmd_help)
-    _register_aliases(app, BRIEF_COMMANDS, cmd_brief)
-
-
-def _register_aliases(app: App, command_names: tuple[str, ...], handler) -> None:
-    for command_name in command_names:
-        app.command(command_name)(handler)
+    handlers = (
+        (WEATHER_COMMANDS, cmd_weather),
+        (SCHEDULE_COMMANDS, cmd_schedule),
+        (CONFIG_COMMANDS, cmd_config),
+        (HELP_COMMANDS, cmd_help),
+        (BRIEF_COMMANDS, cmd_brief),
+    )
+    for command_names, handler in handlers:
+        for command_name in command_names:
+            app.command(command_name)(handler)
 
 
-def _today_for_timezone(timezone: str | None) -> date:
-    if not timezone:
-        return date.today()
-    try:
-        return datetime.now(ZoneInfo(timezone)).date()
-    except (ZoneInfoNotFoundError, ValueError):
-        return date.today()
+def _apply_schedule_action(action: str, text: str, db_path: str | None, user_id: str) -> str:
+    """추가/수정/삭제를 실행하고 성공 메시지를 돌려준다. 실패는 ValueError."""
+    if action == "추가":
+        course = _parse_add_course_arg(text)
+        course_id = add_course(db_path, user_id, **course)
+        return (
+            ":white_check_mark: 시간표에 추가했습니다.\n"
+            f"• ID: *{course_id}*\n"
+            f"• 과목: *{course['course_name']}*\n"
+            f"• 시간: *{course['day_of_week']} {course['start_time']}~{course['end_time']}*"
+        )
+    if action == "수정":
+        course_id, fields = _parse_update_course_arg(text)
+        if not update_course(db_path, user_id, course_id, **fields):
+            raise ValueError(f"수정할 수 있는 개인 일정 ID `{course_id}`를 찾지 못했습니다.")
+        return (
+            ":white_check_mark: 시간표를 수정했습니다.\n"
+            f"• ID: *{course_id}*\n"
+            f"• 변경: {', '.join(f'*{key}*' for key in fields)}"
+        )
+    course_id = _parse_delete_course_arg(text)
+    if not delete_course(db_path, user_id, course_id):
+        raise ValueError(f"삭제할 수 있는 개인 일정 ID `{course_id}`를 찾지 못했습니다.")
+    return f":white_check_mark: 시간표에서 ID *{course_id}* 일정을 삭제했습니다."
+
+
+def _today(timezone: str | None) -> date:
+    return datetime.now(ZoneInfo(valid_timezone(timezone))).date()
 
 
 def _parse_date_arg(text: str, today: date | None = None) -> tuple[date, str]:
     today = today or date.today()
-    if not text or text == "오늘":
-        return today, "오늘"
     if text == "내일":
         return today + timedelta(days=1), "내일"
     try:
@@ -292,97 +213,83 @@ def _parse_date_arg(text: str, today: date | None = None) -> tuple[date, str]:
 
 
 def _is_valid_time(t: str) -> bool:
-    parts = t.split(":")
-    if len(parts) != 2:
-        return False
     try:
-        h, m = int(parts[0]), int(parts[1])
-        return 0 <= h <= 23 and 0 <= m <= 59
+        h, m = (int(part) for part in t.split(":"))
     except ValueError:
         return False
+    return 0 <= h <= 23 and 0 <= m <= 59
 
 
-def _is_valid_timezone(timezone: str) -> bool:
+def _split_args(text: str) -> list[str]:
     try:
-        ZoneInfo(timezone)
-        return True
-    except (ZoneInfoNotFoundError, ValueError):
-        return False
-
-
-def _parse_add_course_arg(text: str) -> dict:
-    try:
-        parts = shlex.split(text)
+        return shlex.split(text)
     except ValueError:
         raise ValueError("입력 형식이 올바르지 않습니다. 공백이 있는 값은 따옴표로 감싸주세요.")
 
+
+def _validate_times(start: str | None, end: str | None) -> None:
+    for label, value in (("시작", start), ("종료", end)):
+        if value is not None and not _is_valid_time(value):
+            raise ValueError(f"{label} 시각 형식이 올바르지 않습니다 (예: 09:00)")
+    if start is not None and end is not None and start >= end:
+        raise ValueError("종료 시각은 시작 시각보다 늦어야 합니다.")
+
+
+def _parse_add_course_arg(text: str) -> dict:
+    parts = _split_args(text)
     if len(parts) < 5 or parts[0] != "추가":
         raise ValueError(
             "사용법: `/시간표 추가 <요일> <시작 HH:MM> <종료 HH:MM> <과목명> [장소] [교수] [메모]`"
         )
 
-    day_of_week = _normalize_day(parts[1])
-    start_time = parts[2]
-    end_time = parts[3]
-    course_name = parts[4]
-
-    if not _is_valid_time(start_time) or not _is_valid_time(end_time):
-        raise ValueError("시각 형식이 올바르지 않습니다 (예: 09:00 10:30)")
-    if start_time >= end_time:
-        raise ValueError("종료 시각은 시작 시각보다 늦어야 합니다.")
+    _, day, start_time, end_time, course_name, *rest = parts
+    day_of_week = _normalize_day(day)
+    _validate_times(start_time, end_time)
 
     return {
         "day_of_week": day_of_week,
         "start_time": start_time,
         "end_time": end_time,
         "course_name": course_name,
-        "room": parts[5] if len(parts) >= 6 else None,
-        "professor": parts[6] if len(parts) >= 7 else None,
-        "memo": " ".join(parts[7:]) if len(parts) >= 8 else None,
+        "room": rest[0] if rest else None,
+        "professor": rest[1] if len(rest) >= 2 else None,
+        "memo": " ".join(rest[2:]) or None,
     }
 
 
 def _parse_update_course_arg(text: str) -> tuple[int, dict]:
-    try:
-        parts = shlex.split(text)
-    except ValueError:
-        raise ValueError("입력 형식이 올바르지 않습니다. 공백이 있는 값은 따옴표로 감싸주세요.")
-
+    parts = _split_args(text)
     if len(parts) < 3 or parts[0] != "수정":
         raise ValueError(
             "사용법: `/시간표 수정 <ID> <field=value>...` "
             "(예: `/시간표 수정 12 room=공학관301호 start=10:00 end=11:30`)"
         )
 
-    try:
-        course_id = int(parts[1])
-    except ValueError:
-        raise ValueError("일정 ID는 숫자로 입력해주세요.")
-
+    course_id = _parse_course_id(parts[1])
     fields = {}
     for assignment in parts[2:]:
         if "=" not in assignment:
             raise ValueError("수정 항목은 `field=value` 형식으로 입력해주세요.")
         raw_key, value = assignment.split("=", 1)
         key = _normalize_update_field(raw_key)
-        if key == "day_of_week":
-            value = _normalize_day(value)
-        fields[key] = value
+        fields[key] = _normalize_day(value) if key == "day_of_week" else value
 
-    _validate_course_update_fields(fields)
+    _validate_times(fields.get("start_time"), fields.get("end_time"))
+    if "course_name" in fields and not fields["course_name"]:
+        raise ValueError("과목명은 비워둘 수 없습니다.")
     return course_id, fields
 
 
 def _parse_delete_course_arg(text: str) -> int:
-    try:
-        parts = shlex.split(text)
-    except ValueError:
-        raise ValueError("입력 형식이 올바르지 않습니다.")
-
+    parts = _split_args(text)
     if len(parts) != 2 or parts[0] != "삭제":
         raise ValueError("사용법: `/시간표 삭제 <ID>`")
+    return _parse_course_id(parts[1])
+
+
+def _parse_course_id(value: str) -> int:
     try:
-        return int(parts[1])
+        return int(value)
     except ValueError:
         raise ValueError("일정 ID는 숫자로 입력해주세요.")
 
@@ -394,22 +301,8 @@ def _normalize_update_field(value: str) -> str:
         raise ValueError("수정 가능한 항목: name, day, start, end, room, professor, memo")
 
 
-def _validate_course_update_fields(fields: dict) -> None:
-    start = fields.get("start_time")
-    end = fields.get("end_time")
-    if start is not None and not _is_valid_time(start):
-        raise ValueError("시작 시각 형식이 올바르지 않습니다 (예: 09:00)")
-    if end is not None and not _is_valid_time(end):
-        raise ValueError("종료 시각 형식이 올바르지 않습니다 (예: 10:30)")
-    if start is not None and end is not None and start >= end:
-        raise ValueError("종료 시각은 시작 시각보다 늦어야 합니다.")
-    if "course_name" in fields and not fields["course_name"]:
-        raise ValueError("과목명은 비워둘 수 없습니다.")
-
-
 def _normalize_day(value: str) -> str:
-    day = value.strip().lower()
     try:
-        return DAY_ALIASES[day]
+        return DAY_ALIASES[value.strip().lower()]
     except KeyError:
         raise ValueError("요일은 월~일 또는 Mon~Sun 형식으로 입력해주세요.")

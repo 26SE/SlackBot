@@ -1,19 +1,18 @@
-WEATHER_EMOJI_MAP = [
-    (range(200, 233), ":thunder_cloud_and_rain:"),
-    (range(300, 322), ":barely_sunny:"),
-    (range(500, 532), ":rain_cloud:"),
-    (range(600, 623), ":snowflake:"),
-    (range(700, 782), ":fog:"),
-    (range(800, 801), ":sunny:"),
-    (range(801, 805), ":partly_sunny:"),
-]
+# OpenWeather condition code 의 앞자리로 분류한다. 800(맑음)만 801~804(구름)와 갈라진다.
+WEATHER_EMOJI = {
+    2: ":thunder_cloud_and_rain:",
+    3: ":barely_sunny:",
+    5: ":rain_cloud:",
+    6: ":snowflake:",
+    7: ":fog:",
+    8: ":partly_sunny:",
+}
 
 
 def get_weather_emoji(weather_id: int) -> str:
-    for code_range, emoji in WEATHER_EMOJI_MAP:
-        if weather_id in code_range:
-            return emoji
-    return ":white_sun_cloud:"
+    if weather_id == 800:
+        return ":sunny:"
+    return WEATHER_EMOJI.get(weather_id // 100, ":white_sun_cloud:")
 
 
 def format_weather_fields(weather: dict) -> list[dict]:

@@ -7,13 +7,13 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from config_store import ConfigStore
 from schedule.repository import add_course, get_courses_for_date, init_db
+from scheduler import is_valid_timezone
 from slack.commands import (
     _parse_add_course_arg,
     _parse_date_arg,
     _parse_delete_course_arg,
     _parse_update_course_arg,
     _is_valid_time,
-    _is_valid_timezone,
     _normalize_day,
     register_commands,
 )
@@ -106,11 +106,11 @@ class TestIsValidTime:
 
 class TestIsValidTimezone:
     def test_정상_타임존(self):
-        assert _is_valid_timezone("Asia/Seoul") is True
-        assert _is_valid_timezone("America/New_York") is True
+        assert is_valid_timezone("Asia/Seoul") is True
+        assert is_valid_timezone("America/New_York") is True
 
     def test_잘못된_타임존(self):
-        assert _is_valid_timezone("Seoul") is False
+        assert is_valid_timezone("Seoul") is False
 
 
 class TestNormalizeDay:

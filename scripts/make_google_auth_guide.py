@@ -9,7 +9,8 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import os
 
-FONT_DIR = os.path.dirname(__file__)
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
+FONT_DIR = os.path.join(ROOT_DIR, "assets", "fonts")
 REGULAR = os.path.join(FONT_DIR, "NanumGothic.ttf")
 BOLD    = os.path.join(FONT_DIR, "NanumGothicBold.ttf")
 
@@ -17,11 +18,10 @@ pdfmetrics.registerFont(TTFont("NanumGothic", REGULAR))
 pdfmetrics.registerFont(TTFont("NanumGothicBold", BOLD))
 
 W, H   = A4
-BLUE   = colors.HexColor("#1E6FD9")
-LBLUE  = colors.HexColor("#EBF2FF")
+BRAND  = colors.HexColor("#A73C3E")
+LBRAND = colors.HexColor("#F8EFEF")
 GRAY   = colors.HexColor("#F5F5F5")
 DKGRAY = colors.HexColor("#444444")
-GREEN  = colors.HexColor("#1A7A4A")
 
 SS = getSampleStyleSheet()
 N  = SS["Normal"]
@@ -30,17 +30,17 @@ def sty(name, parent, **kw):
     return ParagraphStyle(name, parent=parent, **kw)
 
 styles = {
-    "title":  sty("T",  N, fontName="NanumGothicBold", fontSize=20, textColor=BLUE, spaceAfter=4, leading=26),
+    "title":  sty("T",  N, fontName="NanumGothicBold", fontSize=20, textColor=BRAND, spaceAfter=4, leading=26),
     "sub":    sty("S",  N, fontName="NanumGothic",     fontSize=10, textColor=DKGRAY, spaceAfter=12),
-    "h1":     sty("H1", N, fontName="NanumGothicBold", fontSize=13, textColor=BLUE, spaceBefore=12, spaceAfter=5, leading=18),
-    "h2":     sty("H2", N, fontName="NanumGothicBold", fontSize=10, textColor=GREEN, spaceBefore=8, spaceAfter=3),
+    "h1":     sty("H1", N, fontName="NanumGothicBold", fontSize=13, textColor=BRAND, spaceBefore=12, spaceAfter=5, leading=18),
+    "h2":     sty("H2", N, fontName="NanumGothicBold", fontSize=10, textColor=BRAND, spaceBefore=8, spaceAfter=3),
     "body":   sty("B",  N, fontName="NanumGothic",     fontSize=9.5, leading=15, spaceAfter=4, textColor=DKGRAY),
     "code":   sty("C",  N, fontName="Courier",         fontSize=8.5, leading=13, backColor=GRAY,
                   leftIndent=8, rightIndent=8, spaceBefore=2, spaceAfter=6),
     "bullet": sty("BU", N, fontName="NanumGothic",     fontSize=9.5, leading=15, leftIndent=14, spaceAfter=3, textColor=DKGRAY),
     "note":   sty("NO", N, fontName="NanumGothic",     fontSize=8.5, leading=13, textColor=colors.HexColor("#888888"), spaceAfter=6),
     "warn":   sty("W",  N, fontName="NanumGothicBold", fontSize=9,   textColor=colors.HexColor("#B22222"), spaceAfter=4),
-    "num":    sty("NU", N, fontName="NanumGothicBold", fontSize=16,  textColor=BLUE, leading=20),
+    "num":    sty("NU", N, fontName="NanumGothicBold", fontSize=16,  textColor=BRAND, leading=20),
 }
 
 def p(text, style="body"): return Paragraph(text, styles[style])
@@ -58,12 +58,12 @@ def step_box(num, title, items):
     data = [[inner]]
     t = Table(data, colWidths=[W - 40*mm])
     t.setStyle(TableStyle([
-        ("BOX",          (0,0),(-1,-1), 1.2, BLUE),
+        ("BOX",          (0,0),(-1,-1), 1.2, BRAND),
         ("LEFTPADDING",  (0,0),(-1,-1), 12),
         ("RIGHTPADDING", (0,0),(-1,-1), 12),
         ("TOPPADDING",   (0,0),(-1,-1), 10),
         ("BOTTOMPADDING",(0,0),(-1,-1), 10),
-        ("BACKGROUND",   (0,0),(-1,-1), LBLUE),
+        ("BACKGROUND",   (0,0),(-1,-1), LBRAND),
     ]))
     return t
 
@@ -91,7 +91,7 @@ def warn_box(text):
     ]))
     return t
 
-OUT = os.path.join(FONT_DIR, "google_auth_guide.pdf")
+OUT = os.path.join(ROOT_DIR, "docs", "google_auth_guide.pdf")
 doc = SimpleDocTemplate(
     OUT, pagesize=A4,
     leftMargin=20*mm, rightMargin=20*mm,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -17,129 +17,113 @@ from google_calendar import fetch_today_events
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEZONE = "Asia/Seoul"
-_sent_user_briefs: set[tuple[str, str, str]] = set()
-_last_cleanup_date: str | None = None
+# ponytail: 프로세스 메모리 기반 중복 방지. 사용자당 1건이라 정리 로직이 필요 없다.
+# 다중 인스턴스로 늘리면 DB 로 옮길 것.
+_sent_briefs: dict[str, str] = {}
 
 
-def _run_daily_brief(app, channel_id: str, api_key: str, db_path: str, city: str) -> None:
-    logger.info("데일리 브리프 스케줄 실행 시작")
+def is_valid_timezone(timezone: str) -> bool:
     try:
-        weather = fetch_weather(city, api_key)
-    except Exception as e:
-        logger.error("날씨 수집 실패, 스케줄 스킵: %s", e)
-        _notify_error(app, channel_id, f"날씨 수집 실패: {e}")
-        return
+        ZoneInfo(timezone)
+        return True
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
 
+
+def valid_timezone(timezone: str | None) -> str:
+    """알 수 없는 타임존은 기본값으로 대체한다."""
+    if not timezone:
+        return DEFAULT_TIMEZONE
+    if is_valid_timezone(timezone):
+        return timezone
+    logger.warning("올바르지 않은 타임존, 기본값 사용: %s", timezone)
+    return DEFAULT_TIMEZONE
+
+
+def build_brief(
+    api_key: str,
+    db_path: str | None,
+    city: str,
+    timezone: str = DEFAULT_TIMEZONE,
+    user_id: str | None = None,
+) -> list[dict]:
+    """날씨 + 시간표 + 캘린더를 모은 슬랙 블록. user_id 가 없으면 공용 시간표."""
+    weather = fetch_weather(city, api_key)
+    courses = get_courses_for_date(db_path, datetime.now(ZoneInfo(timezone)).date(), user_id)
+    return build_daily_message(
+        weather,
+        courses,
+        timezone=timezone,
+        calendar_events=fetch_today_events(timezone=timezone, user_id=user_id),
+    )
+
+
+def run_brief(
+    app,
+    channel: str,
+    api_key: str,
+    db_path: str | None,
+    city: str,
+    timezone: str = DEFAULT_TIMEZONE,
+    user_id: str | None = None,
+) -> bool:
+    """브리프를 만들어 channel 로 전송한다."""
+    logger.info("데일리 브리프 실행 시작: channel=%s user=%s", channel, user_id)
     try:
-        courses = get_courses_for_date(db_path, date.today())
+        blocks = build_brief(api_key, db_path, city, timezone, user_id)
     except Exception as e:
-        logger.error("시간표 수집 실패, 스케줄 스킵: %s", e)
-        _notify_error(app, channel_id, f"시간표 수집 실패: {e}")
-        return
-
-    calendar_events = fetch_today_events()
-    blocks = build_daily_message(weather, courses, calendar_events=calendar_events)
-
-    try:
-        post_daily_brief(app, channel_id, blocks)
-    except Exception as e:
-        logger.error("메시지 전송 최종 실패: %s", e)
-
-
-def _run_user_daily_brief(app, user_config: dict, api_key: str, db_path: str | None) -> bool:
-    user_id = user_config["slack_user_id"]
-    city = user_config.get("city") or "Seoul"
-    timezone = _valid_timezone(user_config.get("timezone"))
-    today = datetime.now(ZoneInfo(timezone)).date()
-
-    logger.info("사용자 데일리 브리프 실행 시작: %s", user_id)
-    try:
-        weather = fetch_weather(city, api_key)
-    except Exception as e:
-        logger.error("사용자 날씨 수집 실패: %s user=%s", e, user_id)
-        _notify_error(app, user_id, f"날씨 수집 실패: {e}")
+        logger.error("브리프 정보 수집 실패: %s user=%s", e, user_id)
+        _notify_error(app, channel, f"브리프 정보 수집 실패: {e}")
         return False
 
     try:
-        courses = get_courses_for_date(db_path, today, user_id)
-    except Exception as e:
-        logger.error("사용자 시간표 수집 실패: %s user=%s", e, user_id)
-        _notify_error(app, user_id, f"시간표 수집 실패: {e}")
-        return False
-
-    calendar_events = fetch_today_events(timezone=timezone, user_id=user_id)
-    blocks = build_daily_message(weather, courses, timezone=timezone, calendar_events=calendar_events)
-
-    try:
-        post_daily_brief(app, user_id, blocks)
+        post_daily_brief(app, channel, blocks)
         return True
     except Exception as e:
-        logger.error("사용자 메시지 전송 최종 실패: %s user=%s", e, user_id)
+        logger.error("메시지 전송 최종 실패: %s user=%s", e, user_id)
         return False
 
 
 def _run_due_user_briefs(app, config_store: ConfigStore, api_key: str, db_path: str | None) -> None:
-    _cleanup_sent_user_briefs()
     try:
         configs = config_store.list_all()
-        logger.info("유저 설정 목록 조회: %d건", len(configs))
     except Exception as e:
         logger.error("유저 설정 목록 조회 실패: %s", e)
         return
+
     for config in configs:
-        due = _is_user_brief_due(config)
-        logger.info("유저 설정 체크: user=%s notify_time=%s due=%s", config.get("slack_user_id"), config.get("notify_time"), due)
-        if not due:
+        user_id = config["slack_user_id"]
+        key = _due_key(config)
+        if key is None or _sent_briefs.get(user_id) == key:
             continue
-        key = _user_brief_key(config)
-        if key in _sent_user_briefs:
-            continue
-        logger.info("유저 브리프 발송 시도: %s notify_time=%s", config.get("slack_user_id"), config.get("notify_time"))
+        logger.info("유저 브리프 발송 시도: %s %s", user_id, key)
         try:
-            if _run_user_daily_brief(app, config, api_key, db_path):
-                _sent_user_briefs.add(key)
+            sent = run_brief(
+                app,
+                user_id,
+                api_key,
+                db_path,
+                config.get("city") or "Seoul",
+                valid_timezone(config.get("timezone")),
+                user_id,
+            )
         except Exception as e:
-            logger.error("유저 브리프 발송 실패: %s user=%s", e, config.get("slack_user_id"))
+            logger.error("유저 브리프 발송 실패: %s user=%s", e, user_id)
+            continue
+        if sent:
+            _sent_briefs[user_id] = key
 
 
-def _cleanup_sent_user_briefs() -> None:
-    global _last_cleanup_date
-    today = datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).strftime("%Y-%m-%d")
-    if _last_cleanup_date == today:
-        return
-    _sent_user_briefs.intersection_update({key for key in _sent_user_briefs if key[1] == today})
-    _last_cleanup_date = today
-
-
-def _is_user_brief_due(config: dict) -> bool:
+def _due_key(config: dict) -> str | None:
+    """지금이 이 유저의 알림 시각이면 '날짜 시각' 키를, 아니면 None 을 반환."""
     notify_time = str(config.get("notify_time", ""))[:5]
-    timezone = _valid_timezone(config.get("timezone"))
-    now = datetime.now(ZoneInfo(timezone))
-    return notify_time == now.strftime("%H:%M")
-
-
-def _user_brief_key(config: dict) -> tuple[str, str, str]:
-    timezone = _valid_timezone(config.get("timezone"))
-    now = datetime.now(ZoneInfo(timezone))
-    return (config["slack_user_id"], now.strftime("%Y-%m-%d"), str(config.get("notify_time", ""))[:5])
-
-
-def _valid_timezone(timezone: str | None) -> str:
-    timezone = timezone or DEFAULT_TIMEZONE
-    try:
-        ZoneInfo(timezone)
-        return timezone
-    except ZoneInfoNotFoundError:
-        logger.warning("올바르지 않은 타임존, 기본값 사용: %s", timezone)
-        return DEFAULT_TIMEZONE
+    now = datetime.now(ZoneInfo(valid_timezone(config.get("timezone"))))
+    return f"{now:%Y-%m-%d} {notify_time}" if notify_time == f"{now:%H:%M}" else None
 
 
 def _notify_error(app, channel_id: str, message: str) -> None:
     try:
-        app.client.chat_postMessage(
-            channel=channel_id,
-            text=f":rotating_light: [오류] {message}",
-        )
+        app.client.chat_postMessage(channel=channel_id, text=f":rotating_light: [오류] {message}")
     except Exception:
         pass
 
@@ -153,22 +137,22 @@ def create_scheduler(
     notify_time: str,
     config_store: ConfigStore | None = None,
 ) -> BackgroundScheduler:
-    hour, minute = notify_time.split(":")
-    hour_int = int(hour)
-    minute_int = int(minute)
-    if not (0 <= hour_int <= 23 and 0 <= minute_int <= 59):
+    hour, minute = (int(part) for part in notify_time.split(":"))
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
         raise ValueError("notify_time must be HH:MM")
+
     scheduler = BackgroundScheduler(timezone=DEFAULT_TIMEZONE)
     scheduler.add_job(
-        _run_daily_brief,
-        trigger=CronTrigger(hour=hour_int, minute=minute_int, timezone=DEFAULT_TIMEZONE),
+        run_brief,
+        trigger=CronTrigger(hour=hour, minute=minute, timezone=DEFAULT_TIMEZONE),
         args=[app, channel_id, api_key, db_path, city],
         id="daily_brief",
         replace_existing=True,
         misfire_grace_time=300,
         max_instances=1,
     )
-    logger.info("스케줄러 등록: 매일 %s:%s", hour, minute)
+    logger.info("스케줄러 등록: 매일 %02d:%02d", hour, minute)
+
     if config_store is not None:
         scheduler.add_job(
             _run_due_user_briefs,

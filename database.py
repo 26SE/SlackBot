@@ -8,6 +8,14 @@ from typing import Iterator
 
 DEFAULT_DB_PATH = "./data/bot.db"
 
+CREATE_GOOGLE_TOKENS = """
+CREATE TABLE IF NOT EXISTS google_tokens (
+    slack_user_id TEXT PRIMARY KEY,
+    token_json    TEXT NOT NULL,
+    updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
 
 def resolve_db_path(db_path: str | None = None) -> str | None:
     if db_path is not None:
@@ -27,117 +35,65 @@ def is_postgres(db_path: str | None = None) -> bool:
     return resolve_db_path(db_path) is None
 
 
+def placeholder(db_path: str | None = None) -> str:
+    return "%s" if is_postgres(db_path) else "?"
+
+
 @contextmanager
-def connect(db_path: str | None = None, *, dict_rows: bool = False) -> Iterator:
+def db(db_path: str | None = None, *, dict_rows: bool = False) -> Iterator:
+    """커서를 열어 주고, 예외 없이 끝나면 커밋한다. (예외 시 close 로 롤백)"""
     resolved = resolve_db_path(db_path)
     if resolved is None:
         import psycopg2
+        from psycopg2.extras import RealDictCursor
 
         conn = psycopg2.connect(os.environ["DATABASE_URL"])
+        cur = conn.cursor(cursor_factory=RealDictCursor) if dict_rows else conn.cursor()
     else:
         ensure_sqlite_directory(resolved)
         conn = sqlite3.connect(resolved)
         if dict_rows:
             conn.row_factory = sqlite3.Row
-
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
-@contextmanager
-def cursor(conn, *, dict_rows: bool = False):
-    if conn.__class__.__module__.startswith("sqlite3"):
-        cur = conn.cursor()
-    elif dict_rows:
-        from psycopg2.extras import RealDictCursor
-
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-    else:
         cur = conn.cursor()
 
     try:
         yield cur
+        conn.commit()
     finally:
         cur.close()
-
-
-def placeholder(db_path: str | None = None) -> str:
-    return "%s" if is_postgres(db_path) else "?"
-
-
-def now_sql(db_path: str | None = None) -> str:
-    return "NOW()" if is_postgres(db_path) else "CURRENT_TIMESTAMP"
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
 # Google 토큰 DB 저장 (Railway 배포 시 파일시스템 대신 DB 사용)
 # ---------------------------------------------------------------------------
 
-_CREATE_GOOGLE_TOKENS_PG = """
-CREATE TABLE IF NOT EXISTS google_tokens (
-    slack_user_id TEXT PRIMARY KEY,
-    token_json    TEXT NOT NULL,
-    updated_at    TIMESTAMP NOT NULL DEFAULT NOW()
-)
-"""
-
-_CREATE_GOOGLE_TOKENS_SQLITE = """
-CREATE TABLE IF NOT EXISTS google_tokens (
-    slack_user_id TEXT PRIMARY KEY,
-    token_json    TEXT NOT NULL,
-    updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-)
-"""
-
 
 def init_google_tokens_db(db_path: str | None = None) -> None:
-    with connect(db_path) as conn:
-        with conn:
-            with cursor(conn) as cur:
-                cur.execute(
-                    _CREATE_GOOGLE_TOKENS_PG if is_postgres(db_path) else _CREATE_GOOGLE_TOKENS_SQLITE
-                )
+    with db(db_path) as cur:
+        cur.execute(CREATE_GOOGLE_TOKENS)
 
 
 def get_google_token(slack_user_id: str, db_path: str | None = None) -> str | None:
-    ph = placeholder(db_path)
-    with connect(db_path) as conn:
-        with cursor(conn) as cur:
-            cur.execute(
-                f"SELECT token_json FROM google_tokens WHERE slack_user_id = {ph}",
-                (slack_user_id,),
-            )
-            row = cur.fetchone()
+    with db(db_path) as cur:
+        cur.execute(
+            f"SELECT token_json FROM google_tokens WHERE slack_user_id = {placeholder(db_path)}",
+            (slack_user_id,),
+        )
+        row = cur.fetchone()
     return row[0] if row else None
 
 
 def save_google_token(slack_user_id: str, token_json: str, db_path: str | None = None) -> None:
     ph = placeholder(db_path)
-    _now = now_sql(db_path)
-    with connect(db_path) as conn:
-        with conn:
-            with cursor(conn) as cur:
-                if is_postgres(db_path):
-                    cur.execute(
-                        f"""
-                        INSERT INTO google_tokens (slack_user_id, token_json)
-                        VALUES ({ph}, {ph})
-                        ON CONFLICT (slack_user_id) DO UPDATE SET
-                            token_json = EXCLUDED.token_json,
-                            updated_at = {_now}
-                        """,
-                        (slack_user_id, token_json),
-                    )
-                else:
-                    cur.execute(
-                        f"""
-                        INSERT INTO google_tokens (slack_user_id, token_json)
-                        VALUES ({ph}, {ph})
-                        ON CONFLICT (slack_user_id) DO UPDATE SET
-                            token_json = excluded.token_json,
-                            updated_at = {_now}
-                        """,
-                        (slack_user_id, token_json),
-                    )
+    with db(db_path) as cur:
+        cur.execute(
+            f"""
+            INSERT INTO google_tokens (slack_user_id, token_json)
+            VALUES ({ph}, {ph})
+            ON CONFLICT (slack_user_id) DO UPDATE SET
+                token_json = excluded.token_json,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (slack_user_id, token_json),
+        )

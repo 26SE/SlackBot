@@ -10,10 +10,9 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from api import create_api
 from config_store import ConfigStore
-from database import ensure_sqlite_directory, resolve_db_path
+from database import init_google_tokens_db, resolve_db_path
 from schedule.repository import count_courses, init_db, insert_sample_data
-from database import init_google_tokens_db
-from slack.commands import register_commands
+from slack.commands import _is_valid_time, register_commands
 from scheduler import create_scheduler
 
 load_dotenv()
@@ -33,21 +32,6 @@ def _require_env(name: str) -> str:
     return val
 
 
-def _ensure_db_directory(db_path: str) -> None:
-    ensure_sqlite_directory(db_path)
-
-
-def _is_valid_time(value: str) -> bool:
-    parts = value.split(":")
-    if len(parts) != 2:
-        return False
-    try:
-        hour, minute = int(parts[0]), int(parts[1])
-    except ValueError:
-        return False
-    return 0 <= hour <= 23 and 0 <= minute <= 59
-
-
 def main() -> None:
     bot_token = _require_env("SLACK_BOT_TOKEN")
     signing_secret = _require_env("SLACK_SIGNING_SECRET")
@@ -60,40 +44,35 @@ def main() -> None:
         sys.exit(1)
 
     db_path = resolve_db_path()
-    app_token = os.getenv("SLACK_APP_TOKEN", "")
-
     init_db(db_path)
     init_google_tokens_db(db_path)
-
     if count_courses(db_path) == 0:
         insert_sample_data(db_path)
 
     app = App(token=bot_token, signing_secret=signing_secret)
     config_store = ConfigStore(db_path)
-
     register_commands(app, config_store, api_key, db_path)
 
-    default_city = os.getenv("DEFAULT_CITY", "Seoul")
-    scheduler = create_scheduler(app, channel_id, api_key, db_path, default_city, notify_time, config_store)
+    scheduler = create_scheduler(
+        app, channel_id, api_key, db_path, os.getenv("DEFAULT_CITY", "Seoul"), notify_time, config_store
+    )
     scheduler.start()
     logger.info("스케줄러 시작 완료")
 
     # FastAPI (캘린더 ICS) 백그라운드 실행
-    api_app = create_api()
     api_port = int(os.getenv("API_PORT", 3000))
-    api_thread = threading.Thread(
+    threading.Thread(
         target=uvicorn.run,
-        args=(api_app,),
+        args=(create_api(),),
         kwargs={"host": "0.0.0.0", "port": api_port, "log_level": "warning"},
         daemon=True,
-    )
-    api_thread.start()
+    ).start()
     logger.info("캘린더 API 시작 완료 (포트: %d)", api_port)
 
+    app_token = os.getenv("SLACK_APP_TOKEN", "")
     if app_token:
         logger.info("Socket Mode로 시작")
-        handler = SocketModeHandler(app, app_token)
-        handler.start()
+        SocketModeHandler(app, app_token).start()
     else:
         logger.info("HTTP 모드로 시작")
         app.start(port=int(os.getenv("PORT", 3001)))

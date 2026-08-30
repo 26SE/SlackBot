@@ -12,21 +12,12 @@ _cache: dict = {}
 CACHE_TTL = 3600
 
 
-def _is_cache_valid(key: str) -> bool:
-    if key not in _cache:
-        return False
-    return time.time() - _cache[key]["timestamp"] < CACHE_TTL
-
-
-def _has_cache(key: str) -> bool:
-    return key in _cache
-
-
 def fetch_weather(city: str, api_key: str) -> dict:
     cache_key = f"weather:{city}"
-    if _is_cache_valid(cache_key):
+    cached = _cache.get(cache_key)
+    if cached and time.time() - cached["timestamp"] < CACHE_TTL:
         logger.warning("날씨 캐시 사용: %s", city)
-        return _cache[cache_key]["data"]
+        return cached["data"]
 
     try:
         resp = requests.get(
@@ -53,9 +44,9 @@ def fetch_weather(city: str, api_key: str) -> dict:
 
     except requests.RequestException as e:
         logger.error("날씨 API 호출 실패: %s", e)
-        if _has_cache(cache_key):
+        if cached:
             logger.warning("만료된 캐시 사용: %s", city)
-            return _cache[cache_key]["data"]
+            return cached["data"]
         raise
 
 

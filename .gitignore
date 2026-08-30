@@ -1,22 +1,21 @@
-# 환경 변수
+# 비밀 정보
 .env
+.env.*
+!.env.example
 
 # Google OAuth
 credentials.json
-token.json
-token_*.json
+token*.json
 
-# 데이터베이스
+# 로컬 데이터
 data/
 
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 *.egg-info/
-dist/
 build/
+dist/
 .eggs/
 
 # 가상환경

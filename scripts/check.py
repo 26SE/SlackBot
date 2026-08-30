@@ -1,7 +1,8 @@
 import sqlite3
 import os
 
-db = os.path.join(os.path.dirname(__file__), "data", "bot.db")
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
+db = os.path.join(ROOT_DIR, "data", "bot.db")
 conn = sqlite3.connect(db)
 
 rows = conn.execute("SELECT slack_user_id, city, notify_time, timezone FROM user_config").fetchall()

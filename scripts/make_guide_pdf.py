@@ -11,7 +11,8 @@ from reportlab.pdfbase.ttfonts import TTFont
 import os, urllib.request
 
 # ── 한글 폰트 다운로드 (NanumGothic) ──────────────────────────────────────
-FONT_DIR = os.path.dirname(__file__)
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
+FONT_DIR = os.path.join(ROOT_DIR, "assets", "fonts")
 REGULAR = os.path.join(FONT_DIR, "NanumGothic.ttf")
 BOLD    = os.path.join(FONT_DIR, "NanumGothicBold.ttf")
 
@@ -30,12 +31,10 @@ pdfmetrics.registerFont(TTFont("NanumGothicBold", BOLD))
 BASE   = "NanumGothic"
 BOLDF  = "NanumGothicBold"
 W, H   = A4
-BLUE   = colors.HexColor("#1E6FD9")
-LBLUE  = colors.HexColor("#EBF2FF")
+BRAND  = colors.HexColor("#A73C3E")
+LBRAND = colors.HexColor("#F8EFEF")
 GRAY   = colors.HexColor("#F5F5F5")
 DKGRAY = colors.HexColor("#444444")
-GREEN  = colors.HexColor("#1A7A4A")
-LGREEN = colors.HexColor("#E8F5EE")
 
 def sty(name, parent, **kw):
     s = ParagraphStyle(name, parent=parent, **kw)
@@ -45,13 +44,13 @@ SS = getSampleStyleSheet()
 N  = SS["Normal"]
 
 styles = {
-    "title":   sty("T", N, fontName=BOLDF, fontSize=22, textColor=BLUE,
+    "title":   sty("T", N, fontName=BOLDF, fontSize=22, textColor=BRAND,
                    spaceAfter=4, leading=28),
     "sub":     sty("S", N, fontName=BASE,  fontSize=11, textColor=DKGRAY,
                    spaceAfter=14),
-    "h1":      sty("H1", N, fontName=BOLDF, fontSize=14, textColor=BLUE,
+    "h1":      sty("H1", N, fontName=BOLDF, fontSize=14, textColor=BRAND,
                    spaceBefore=14, spaceAfter=6, leading=20),
-    "h2":      sty("H2", N, fontName=BOLDF, fontSize=11, textColor=GREEN,
+    "h2":      sty("H2", N, fontName=BOLDF, fontSize=11, textColor=BRAND,
                    spaceBefore=8, spaceAfter=4),
     "body":    sty("B",  N, fontName=BASE, fontSize=9.5, leading=15,
                    spaceAfter=4, textColor=DKGRAY),
@@ -64,7 +63,7 @@ styles = {
                    textColor=colors.HexColor("#888888"), spaceAfter=6),
     "warn":    sty("W",  N, fontName=BOLDF, fontSize=9, textColor=colors.HexColor("#B22222"),
                    spaceAfter=4),
-    "step_no": sty("SN", N, fontName=BOLDF, fontSize=20, textColor=BLUE,
+    "step_no": sty("SN", N, fontName=BOLDF, fontSize=20, textColor=BRAND,
                    leading=24),
 }
 
@@ -83,13 +82,13 @@ def section_box(title_text, content_items):
     data = [[inner]]
     t = Table(data, colWidths=[W - 40*mm])
     t.setStyle(TableStyle([
-        ("BOX",        (0,0), (-1,-1), 1,   BLUE),
+        ("BOX",        (0,0), (-1,-1), 1,   BRAND),
         ("LEFTPADDING",(0,0), (-1,-1), 10),
         ("RIGHTPADDING",(0,0),(-1,-1), 10),
         ("TOPPADDING", (0,0), (-1,-1), 8),
         ("BOTTOMPADDING",(0,0),(-1,-1), 8),
-        ("BACKGROUND", (0,0), (-1,-1), LBLUE),
-        ("ROWBACKGROUNDS",(0,0),(-1,-1),[LBLUE]),
+        ("BACKGROUND", (0,0), (-1,-1), LBRAND),
+        ("ROWBACKGROUNDS",(0,0),(-1,-1),[LBRAND]),
     ]))
     return t
 
@@ -128,7 +127,7 @@ def cmd_table(rows):
     ]
     t = Table(data, colWidths=[60*mm, W - 40*mm - 60*mm])
     t.setStyle(TableStyle([
-        ("BACKGROUND",   (0,0),(-1,0),  BLUE),
+        ("BACKGROUND",   (0,0),(-1,0),  BRAND),
         ("TEXTCOLOR",    (0,0),(-1,0),  colors.white),
         ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, GRAY]),
         ("BOX",          (0,0),(-1,-1), 0.5, colors.HexColor("#CCCCCC")),
@@ -141,7 +140,7 @@ def cmd_table(rows):
     return t
 
 # ── 문서 구성 ─────────────────────────────────────────────────────────────
-OUT = os.path.join(FONT_DIR, "slackbot_setup_guide.pdf")
+OUT = os.path.join(ROOT_DIR, "docs", "slackbot_setup_guide.pdf")
 doc = SimpleDocTemplate(
     OUT, pagesize=A4,
     leftMargin=20*mm, rightMargin=20*mm,
@@ -174,10 +173,10 @@ toc_data = [
 ]
 toc = Table(toc_data, colWidths=[30*mm, W - 40*mm - 30*mm])
 toc.setStyle(TableStyle([
-    ("BACKGROUND",   (0,0),(-1,0), BLUE),
+    ("BACKGROUND",   (0,0),(-1,0), BRAND),
     ("TEXTCOLOR",    (0,0),(-1,0), colors.white),
-    ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LBLUE]),
-    ("BOX",          (0,0),(-1,-1), 0.5, BLUE),
+    ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LBRAND]),
+    ("BOX",          (0,0),(-1,-1), 0.5, BRAND),
     ("INNERGRID",    (0,0),(-1,-1), 0.3, colors.HexColor("#DDDDDD")),
     ("LEFTPADDING",  (0,0),(-1,-1), 8),
     ("TOPPADDING",   (0,0),(-1,-1), 5),
@@ -279,10 +278,10 @@ scope_data = [
 ]
 scope_t = Table(scope_data, colWidths=[50*mm, W - 40*mm - 50*mm])
 scope_t.setStyle(TableStyle([
-    ("BACKGROUND",   (0,0),(-1,0), GREEN),
+    ("BACKGROUND",   (0,0),(-1,0), BRAND),
     ("TEXTCOLOR",    (0,0),(-1,0), colors.white),
-    ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LGREEN]),
-    ("BOX",          (0,0),(-1,-1), 0.5, GREEN),
+    ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LBRAND]),
+    ("BOX",          (0,0),(-1,-1), 0.5, BRAND),
     ("INNERGRID",    (0,0),(-1,-1), 0.3, colors.HexColor("#CCDDCC")),
     ("LEFTPADDING",  (0,0),(-1,-1), 6),
     ("TOPPADDING",   (0,0),(-1,-1), 4),
